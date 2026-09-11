@@ -1,14 +1,15 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <inttypes.h>
 
 #include "handler/handler.h"
 #include "handler/handlerresult.h"
 #include "fibonaccihandler.h"
 
-long int fibonacci(int it) {
-    int x = 0;
-    int y = 1;
+uint64_t fibonacci(int it) {
+    uint64_t x = 0;
+    uint64_t y = 1;
     if (it < 0) {
         return -1;
     } else if (it < 1) {
@@ -25,22 +26,30 @@ long int fibonacci(int it) {
 }
 
 HandlerResult *fibonacci_handler(const void *payload, size_t payload_size) {
-    (void)payload_size;
-
+    if (payload == NULL || payload_size == 0) {
+        return handler_result_create(
+            JOB_FAILURE,
+            NULL,
+            0
+        );
+    }
     const long int *it = payload;
-    long int fibonacci_result = fibonacci(*it);
+    uint64_t *fibonacci_result = malloc(sizeof(*fibonacci_result));
+    if (fibonacci_result == NULL) {
+        return handler_result_create(
+            JOB_FAILURE,
+            NULL,
+            0
+        );
+    }
+    *fibonacci_result = fibonacci(*it);
 
     HandlerResult *result = handler_result_create(
-        0,
+        JOB_SUCCESS,
         &fibonacci_result,
         sizeof(fibonacci_result)
     );
 
-    // For demonstration purposes, we will just print the payload size.
-    // In a real implementation, you would process the payload to compute the Fibonacci number.
-    printf("The fibonacci result is: %ld\n", fibonacci_result);
-
-    // Here you would normally compute the Fibonacci number based on the payload.
-    // For now, we will just return success.
+    printf("The fibonacci result is: %"PRIu64"\n", *fibonacci_result);
     return result;
 }
