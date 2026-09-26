@@ -60,7 +60,6 @@ WorkerPool *worker_pool_create(JobQueue *queue, size_t worker_count)
     if (pool->threads == NULL)
     {
         free(pool);
-        job_queue_destroy(queue);
         return NULL;
     }
 
@@ -76,6 +75,10 @@ void worker_pool_start(WorkerPool *pool)
             for (size_t j = 0; j < i; j++)
             {
                 pthread_cancel(pool->threads[j]);
+            }
+            for (size_t j = 0; j < i; j++)
+            {
+                pthread_join(pool->threads[j], NULL);
             }
             free(pool->threads);
             free(pool);
@@ -104,11 +107,6 @@ void worker_pool_destroy(WorkerPool *pool)
     if (pool == NULL)
     {
         return;
-    }
-
-    for (size_t i = 0; i < pool->worker_count; i++)
-    {
-        pthread_join(pool->threads[i], NULL);
     }
 
     free(pool->threads);

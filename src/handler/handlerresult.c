@@ -2,6 +2,7 @@
 #include <stdlib.h>
 
 #include "handlerresult.h"
+#include "handler.h"
 
 struct HandlerResult {
     int status;
@@ -11,24 +12,29 @@ struct HandlerResult {
 
 HandlerResult *handler_result_create(int status, void *result, size_t result_size) {
     HandlerResult *handler_result = malloc(sizeof(HandlerResult));
-    
-    if (result == NULL || result_size == 0) {
+    if (handler_result == NULL) {
         return NULL;
     }
     handler_result->status = status;
     handler_result->result_size = result_size;
 
-    handler_result->result = malloc(result_size);
-    if (handler_result->result == NULL) {
-        free(result);
-        return NULL;
+    if (result != NULL && result_size != 0) {
+        handler_result->result = result;
+    } else {
+        handler_result->result = NULL;
+        handler_result->result_size = 0;
     }
 
     return handler_result;
 }
 
 void handler_result_destroy(HandlerResult *result) {
-    free(result->result);
+    if (result == NULL) {
+        return;
+    }
+    if (result->result != NULL) {
+        free(result->result);
+    }
     free(result);
 }
 

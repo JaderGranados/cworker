@@ -46,8 +46,8 @@ HandlerResult *fibonacci_handler(const void *payload, size_t payload_size) {
 
     HandlerResult *result = handler_result_create(
         JOB_SUCCESS,
-        &fibonacci_result,
-        sizeof(fibonacci_result)
+        fibonacci_result,
+        sizeof(*fibonacci_result)
     );
 
     printf("The fibonacci result is: %"PRIu64"\n", *fibonacci_result);
