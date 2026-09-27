@@ -14,6 +14,7 @@ struct WorkerPool
     JobQueue *queue;
     pthread_t *threads;
     size_t worker_count;
+    ResultStore *result_store;
 };
 
 static void *worker_thread(void *arg)
@@ -33,14 +34,16 @@ static void *worker_thread(void *arg)
             get_job_payload(job),
             get_job_payload_size(job)
         );
+        if (result_store_put(pool->result_store, get_job_id(job), result) != 0) {
+            handler_result_destroy(result);
+        }
         destroy_job(job);
-        handler_result_destroy(result);
     }
 
     return NULL;
 }
 
-WorkerPool *worker_pool_create(JobQueue *queue, size_t worker_count)
+WorkerPool *worker_pool_create(JobQueue *queue, size_t worker_count, ResultStore *result_store)
 {
     if (queue == NULL || worker_count == 0)
     {
@@ -55,6 +58,12 @@ WorkerPool *worker_pool_create(JobQueue *queue, size_t worker_count)
 
     pool->queue = queue;
     pool->worker_count = worker_count;
+
+    if (result_store == NULL) {
+        free(pool);
+        return NULL;
+    }
+    pool->result_store = result_store;
 
     pool->threads = malloc(sizeof(*pool->threads) * worker_count);
     if (pool->threads == NULL)
