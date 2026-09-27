@@ -6,6 +6,7 @@
 
 typedef struct ResultEntry {
     int job_id;
+    ResultStatus status;
     HandlerResult *result;
 } ResultEntry;
 
@@ -48,29 +49,24 @@ void result_store_destroy(ResultStore *result_store) {
         return;
     }
 
-    if (result_store->size > 0) {
-        for (size_t i = 0; i < result_store->size; i++) {
-            handler_result_destroy(result_store->entries[i].result);
-        }
+    for (size_t i = 0; i < result_store->size; i++) {
+        handler_result_destroy(result_store->entries[i].result);
     }
     free(result_store->entries);
     pthread_mutex_destroy(&result_store->mutex);
     free(result_store);
 }
 
-int result_store_put(ResultStore *result_store, int job_id, HandlerResult *result) {
-    if (result == NULL) {
-        return -1;
-    }
+int result_store_submit(ResultStore *result_store, int job_id) {
     pthread_mutex_lock(&result_store->mutex);
-    if (result_store->size > 0) {
-        for (size_t i = 0; i < result_store->size; i++) {
-            if (result_store->entries[i].job_id == job_id) {
-                pthread_mutex_unlock(&result_store->mutex);
-                return -1;
-            }
+
+    for (size_t i = 0; i < result_store->size; i++) {
+        if (result_store->entries[i].job_id == job_id) {
+            pthread_mutex_unlock(&result_store->mutex);
+            return -1;
         }
     }
+
     if (result_store->size == result_store->capacity) {
         void *new_entries = realloc(result_store->entries, sizeof(*result_store->entries) * result_store->capacity * 2);
         if (new_entries == NULL) {
@@ -82,7 +78,8 @@ int result_store_put(ResultStore *result_store, int job_id, HandlerResult *resul
     }
 
     result_store->entries[result_store->size].job_id = job_id;
-    result_store->entries[result_store->size].result = result;
+    result_store->entries[result_store->size].status = RESULT_PENDING;
+    result_store->entries[result_store->size].result = NULL;
     result_store->size++;
 
     pthread_mutex_unlock(&result_store->mutex);
@@ -90,24 +87,44 @@ int result_store_put(ResultStore *result_store, int job_id, HandlerResult *resul
     return 0;
 }
 
-HandlerResult *result_store_get(ResultStore *result_store, int job_id) {
-    HandlerResult *result;
+int result_store_complete(ResultStore *result_store, int job_id, HandlerResult *result) {
+    if (result == NULL) {
+        return -1;
+    }
 
     pthread_mutex_lock(&result_store->mutex);
+
     for (size_t i = 0; i < result_store->size; i++) {
         if (result_store->entries[i].job_id == job_id) {
-            result = result_store->entries[i].result;
-            if (i < result_store->size-1) {
-                for (size_t j = i; j < result_store->size-1; j++) {
-                    result_store->entries[j] = result_store->entries[j + 1];
-                }
+            if (result_store->entries[i].status == RESULT_READY) {
+                pthread_mutex_unlock(&result_store->mutex);
+                return -1;
             }
-            result_store->size--;
+            result_store->entries[i].result = result;
+            result_store->entries[i].status = RESULT_READY;
             pthread_mutex_unlock(&result_store->mutex);
-            return result;
+            return 0;
         }
     }
+
+    pthread_mutex_unlock(&result_store->mutex);
+    return -1;
+}
+
+ResultLookup result_store_get(ResultStore *result_store, int job_id) {
+    ResultLookup lookup = { RESULT_NOT_FOUND, NULL };
+
+    pthread_mutex_lock(&result_store->mutex);
+
+    for (size_t i = 0; i < result_store->size; i++) {
+        if (result_store->entries[i].job_id == job_id) {
+            lookup.status = result_store->entries[i].status;
+            lookup.result = result_store->entries[i].result;
+            break;
+        }
+    }
+
     pthread_mutex_unlock(&result_store->mutex);
 
-    return NULL;
+    return lookup;
 }

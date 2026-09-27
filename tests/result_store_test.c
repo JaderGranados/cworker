@@ -44,34 +44,36 @@ static void test_create_destroy_with_leftovers(void)
     HandlerResult *r1 = make_result_with_value(1);
     HandlerResult *r2 = make_result_with_value(2);
 
-    CHECK(result_store_put(store, 1, r1) == 0, "create_destroy_with_leftovers: put job 1 succeeded");
-    CHECK(result_store_put(store, 2, r2) == 0, "create_destroy_with_leftovers: put job 2 succeeded");
+    CHECK(result_store_submit(store, 1) == 0, "create_destroy_with_leftovers: submit job 1 succeeded");
+    CHECK(result_store_complete(store, 1, r1) == 0, "create_destroy_with_leftovers: complete job 1 succeeded");
+    CHECK(result_store_submit(store, 2) == 0, "create_destroy_with_leftovers: submit job 2 succeeded");
+    CHECK(result_store_complete(store, 2, r2) == 0, "create_destroy_with_leftovers: complete job 2 succeeded");
 
     /* Neither result was ever retrieved via get() — destroy must free them itself. */
     result_store_destroy(store);
     printf("PASS: create_destroy_with_leftovers: destroy freed un-retrieved results without crashing\n");
 }
 
-static void test_put_then_get(void)
+static void test_submit_complete_then_get(void)
 {
     ResultStore *store = result_store_create(4);
     HandlerResult *r = make_result_with_value(42);
 
-    CHECK(result_store_put(store, 10, r) == 0, "put_then_get: put succeeded");
+    CHECK(result_store_submit(store, 10) == 0, "submit_complete_then_get: submit succeeded");
+    CHECK(result_store_complete(store, 10, r) == 0, "submit_complete_then_get: complete succeeded");
 
-    HandlerResult *fetched = result_store_get(store, 10);
-    CHECK(fetched != NULL, "put_then_get: get returned non-NULL");
-    CHECK(fetched == r, "put_then_get: get returned the same HandlerResult pointer that was put");
-    CHECK(handler_result_get_status(fetched) == JOB_SUCCESS, "put_then_get: status matches");
-    CHECK(handler_result_get_result_size(fetched) == sizeof(uint64_t), "put_then_get: data_size matches");
-    CHECK(*(uint64_t *)handler_result_get_result(fetched) == 42, "put_then_get: data matches");
+    ResultLookup lookup = result_store_get(store, 10);
+    CHECK(lookup.status == RESULT_READY, "submit_complete_then_get: status is RESULT_READY");
+    CHECK(lookup.result == r, "submit_complete_then_get: get returned the same HandlerResult pointer that was completed");
+    CHECK(handler_result_get_status(lookup.result) == JOB_SUCCESS, "submit_complete_then_get: status matches");
+    CHECK(handler_result_get_result_size(lookup.result) == sizeof(uint64_t), "submit_complete_then_get: data_size matches");
+    CHECK(*(uint64_t *)handler_result_get_result(lookup.result) == 42, "submit_complete_then_get: data matches");
 
-    HandlerResult *second_fetch = result_store_get(store, 10);
-    CHECK(second_fetch == NULL, "put_then_get: get() removed the entry (second get returns NULL)");
+    ResultLookup second_lookup = result_store_get(store, 10);
+    CHECK(second_lookup.status == RESULT_READY, "submit_complete_then_get: get() is non-destructive (second get is still RESULT_READY)");
+    CHECK(second_lookup.result == r, "submit_complete_then_get: second get returns the same pointer");
 
-    /* We now own `fetched` (ownership transferred by get()). */
-    handler_result_destroy(fetched);
-
+    /* get() no longer transfers ownership — the store still owns `r`, destroy() will free it. */
     result_store_destroy(store);
 }
 
@@ -79,8 +81,22 @@ static void test_get_missing_id(void)
 {
     ResultStore *store = result_store_create(4);
 
-    HandlerResult *fetched = result_store_get(store, 999);
-    CHECK(fetched == NULL, "get_missing_id: get on unknown job_id returns NULL");
+    ResultLookup lookup = result_store_get(store, 999);
+    CHECK(lookup.status == RESULT_NOT_FOUND, "get_missing_id: get on unknown job_id returns RESULT_NOT_FOUND");
+    CHECK(lookup.result == NULL, "get_missing_id: result is NULL");
+
+    result_store_destroy(store);
+}
+
+static void test_get_pending(void)
+{
+    ResultStore *store = result_store_create(4);
+
+    CHECK(result_store_submit(store, 5) == 0, "get_pending: submit succeeded");
+
+    ResultLookup lookup = result_store_get(store, 5);
+    CHECK(lookup.status == RESULT_PENDING, "get_pending: status is RESULT_PENDING before completion");
+    CHECK(lookup.result == NULL, "get_pending: result is NULL while pending");
 
     result_store_destroy(store);
 }
@@ -91,15 +107,15 @@ static void test_success_with_no_data(void)
 
     HandlerResult *empty = handler_result_create(JOB_SUCCESS, NULL, 0);
     CHECK(empty != NULL, "success_with_no_data: handler_result_create allows NULL data");
-    CHECK(result_store_put(store, 20, empty) == 0, "success_with_no_data: put succeeded");
+    CHECK(result_store_submit(store, 20) == 0, "success_with_no_data: submit succeeded");
+    CHECK(result_store_complete(store, 20, empty) == 0, "success_with_no_data: complete succeeded");
 
-    HandlerResult *fetched = result_store_get(store, 20);
-    CHECK(fetched != NULL, "success_with_no_data: get returned non-NULL");
-    CHECK(handler_result_get_status(fetched) == JOB_SUCCESS, "success_with_no_data: status is JOB_SUCCESS");
-    CHECK(handler_result_get_result(fetched) == NULL, "success_with_no_data: data is NULL");
-    CHECK(handler_result_get_result_size(fetched) == 0, "success_with_no_data: data_size is 0");
+    ResultLookup lookup = result_store_get(store, 20);
+    CHECK(lookup.status == RESULT_READY, "success_with_no_data: status is RESULT_READY");
+    CHECK(handler_result_get_status(lookup.result) == JOB_SUCCESS, "success_with_no_data: status is JOB_SUCCESS");
+    CHECK(handler_result_get_result(lookup.result) == NULL, "success_with_no_data: data is NULL");
+    CHECK(handler_result_get_result_size(lookup.result) == 0, "success_with_no_data: data_size is 0");
 
-    handler_result_destroy(fetched);
     result_store_destroy(store);
 }
 
@@ -109,26 +125,40 @@ static void test_duplicate_job_id(void)
     HandlerResult *r1 = make_result_with_value(1);
     HandlerResult *r2 = make_result_with_value(2);
 
-    CHECK(result_store_put(store, 30, r1) == 0, "duplicate_job_id: first put succeeded");
-    CHECK(result_store_put(store, 30, r2) != 0, "duplicate_job_id: second put with same id failed");
+    CHECK(result_store_submit(store, 30) == 0, "duplicate_job_id: first submit succeeded");
+    CHECK(result_store_submit(store, 30) != 0, "duplicate_job_id: second submit with same id failed");
+    CHECK(result_store_complete(store, 30, r1) == 0, "duplicate_job_id: complete succeeded");
+    CHECK(result_store_complete(store, 30, r2) != 0, "duplicate_job_id: second complete on an already-READY entry failed");
 
-    /* put() for r2 failed, so ownership never transferred — we must free it ourselves. */
+    /* The second complete() failed, so ownership of r2 never transferred — free it ourselves. */
     handler_result_destroy(r2);
 
-    HandlerResult *fetched = result_store_get(store, 30);
-    CHECK(fetched == r1, "duplicate_job_id: original entry (r1) is still the one stored");
-    CHECK(*(uint64_t *)handler_result_get_result(fetched) == 1, "duplicate_job_id: original value unchanged");
+    ResultLookup lookup = result_store_get(store, 30);
+    CHECK(lookup.result == r1, "duplicate_job_id: original entry (r1) is still the one stored");
+    CHECK(*(uint64_t *)handler_result_get_result(lookup.result) == 1, "duplicate_job_id: original value unchanged");
 
-    handler_result_destroy(fetched);
     result_store_destroy(store);
 }
 
-static void test_put_null_result(void)
+static void test_complete_null_result(void)
 {
     ResultStore *store = result_store_create(4);
 
-    CHECK(result_store_put(store, 40, NULL) != 0, "put_null_result: put with NULL result fails");
+    CHECK(result_store_submit(store, 40) == 0, "complete_null_result: submit succeeded");
+    CHECK(result_store_complete(store, 40, NULL) != 0, "complete_null_result: complete with NULL result fails");
 
+    result_store_destroy(store);
+}
+
+static void test_complete_without_submit(void)
+{
+    ResultStore *store = result_store_create(4);
+    HandlerResult *r = make_result_with_value(7);
+
+    CHECK(result_store_complete(store, 99, r) != 0, "complete_without_submit: complete on a never-submitted id fails");
+
+    /* complete() failed, so we still own r. */
+    handler_result_destroy(r);
     result_store_destroy(store);
 }
 
@@ -140,11 +170,16 @@ static void test_growth(void)
     const int count = 10;
     for (int i = 0; i < count; i++)
     {
-        HandlerResult *r = make_result_with_value((uint64_t)i);
-        int rc = result_store_put(store, i, r);
-        if (rc != 0)
+        if (result_store_submit(store, i) != 0)
         {
-            printf("FAIL: growth: put job %d failed\n", i);
+            printf("FAIL: growth: submit job %d failed\n", i);
+            failures++;
+            continue;
+        }
+        HandlerResult *r = make_result_with_value((uint64_t)i);
+        if (result_store_complete(store, i, r) != 0)
+        {
+            printf("FAIL: growth: complete job %d failed\n", i);
             failures++;
             handler_result_destroy(r);
         }
@@ -153,14 +188,10 @@ static void test_growth(void)
     int all_ok = 1;
     for (int i = 0; i < count; i++)
     {
-        HandlerResult *fetched = result_store_get(store, i);
-        if (fetched == NULL || *(uint64_t *)handler_result_get_result(fetched) != (uint64_t)i)
+        ResultLookup lookup = result_store_get(store, i);
+        if (lookup.status != RESULT_READY || *(uint64_t *)handler_result_get_result(lookup.result) != (uint64_t)i)
         {
             all_ok = 0;
-        }
-        if (fetched != NULL)
-        {
-            handler_result_destroy(fetched);
         }
     }
     CHECK(all_ok, "growth: all entries beyond initial capacity remained independently retrievable");
@@ -175,14 +206,18 @@ typedef struct
     int count;
 } ThreadArgs;
 
-static void *concurrent_put_worker(void *arg)
+static void *concurrent_submit_worker(void *arg)
 {
     ThreadArgs *args = arg;
     for (int i = 0; i < args->count; i++)
     {
         int job_id = args->start_id + i;
+        if (result_store_submit(args->store, job_id) != 0)
+        {
+            continue;
+        }
         HandlerResult *r = make_result_with_value((uint64_t)job_id);
-        if (result_store_put(args->store, job_id, r) != 0)
+        if (result_store_complete(args->store, job_id, r) != 0)
         {
             handler_result_destroy(r);
         }
@@ -190,7 +225,7 @@ static void *concurrent_put_worker(void *arg)
     return NULL;
 }
 
-static void test_concurrent_put_get(void)
+static void test_concurrent_submit_complete_get(void)
 {
     const int per_thread = 50;
     ResultStore *store = result_store_create(4);
@@ -203,7 +238,7 @@ static void test_concurrent_put_get(void)
         args[t].store = store;
         args[t].start_id = t * per_thread;
         args[t].count = per_thread;
-        pthread_create(&threads[t], NULL, concurrent_put_worker, &args[t]);
+        pthread_create(&threads[t], NULL, concurrent_submit_worker, &args[t]);
     }
 
     for (int t = 0; t < THREAD_COUNT; t++)
@@ -215,23 +250,19 @@ static void test_concurrent_put_get(void)
     int retrieved_ok = 1;
     for (int id = 0; id < total; id++)
     {
-        HandlerResult *fetched = result_store_get(store, id);
-        if (fetched == NULL || *(uint64_t *)handler_result_get_result(fetched) != (uint64_t)id)
+        ResultLookup lookup = result_store_get(store, id);
+        if (lookup.status != RESULT_READY || *(uint64_t *)handler_result_get_result(lookup.result) != (uint64_t)id)
         {
             retrieved_ok = 0;
-            printf("FAIL: concurrent_put_get: job %d not retrievable or wrong value\n", id);
+            printf("FAIL: concurrent_submit_complete_get: job %d not retrievable or wrong value\n", id);
             failures++;
         }
-        else
-        {
-            handler_result_destroy(fetched);
-        }
     }
-    CHECK(retrieved_ok, "concurrent_put_get: every concurrently-put job was retrieved exactly once with the right value");
+    CHECK(retrieved_ok, "concurrent_submit_complete_get: every concurrently-submitted job was retrieved with the right value");
 
-    /* Every id should now be gone. */
-    HandlerResult *should_be_null = result_store_get(store, 0);
-    CHECK(should_be_null == NULL, "concurrent_put_get: store is empty after all results were retrieved");
+    /* get() is non-destructive now — entries stay put instead of disappearing after one read. */
+    ResultLookup still_there = result_store_get(store, 0);
+    CHECK(still_there.status == RESULT_READY, "concurrent_submit_complete_get: entries remain retrievable after get (non-destructive)");
 
     result_store_destroy(store);
 }
@@ -240,13 +271,15 @@ int main(void)
 {
     test_create_destroy_empty();
     test_create_destroy_with_leftovers();
-    test_put_then_get();
+    test_submit_complete_then_get();
     test_get_missing_id();
+    test_get_pending();
     test_success_with_no_data();
     test_duplicate_job_id();
-    test_put_null_result();
+    test_complete_null_result();
+    test_complete_without_submit();
     test_growth();
-    test_concurrent_put_get();
+    test_concurrent_submit_complete_get();
 
     if (failures == 0)
     {

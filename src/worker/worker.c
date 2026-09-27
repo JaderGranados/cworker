@@ -34,7 +34,7 @@ static void *worker_thread(void *arg)
             get_job_payload(job),
             get_job_payload_size(job)
         );
-        if (result_store_put(pool->result_store, get_job_id(job), result) != 0) {
+        if (result_store_complete(pool->result_store, get_job_id(job), result) != 0) {
             handler_result_destroy(result);
         }
         destroy_job(job);

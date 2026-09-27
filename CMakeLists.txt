@@ -15,6 +15,7 @@ add_executable(cworker
     src/worker/worker.c
     src/mappers/argmapper.c
     src/result/result_store.c
+    src/server/tcpserver.c
 )
 
 add_executable(queue_test
@@ -26,6 +27,7 @@ add_executable(queue_test
     src/handler/handlerresult.c
     src/handlers/fibonaccihandler.c
     src/mappers/argmapper.c
+    src/result/result_store.c
 )
 
 add_executable(worker_pool_test
@@ -37,6 +39,7 @@ add_executable(worker_pool_test
     src/handler/handlerresult.c
     src/handlers/fibonaccihandler.c
     src/mappers/argmapper.c
+    src/result/result_store.c
 )
 
 add_executable(result_store_test

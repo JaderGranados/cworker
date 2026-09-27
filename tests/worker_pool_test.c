@@ -8,6 +8,7 @@
 #include "job/job.h"
 #include "queue/jobqueue.h"
 #include "worker/worker.h"
+#include "result/result_store.h"
 
 typedef struct
 {
@@ -21,10 +22,18 @@ int main() {
         return 1;
     }
 
-    WorkerPool *pool = worker_pool_create(queue, WORKER_COUNT);
+    ResultStore *result_store = result_store_create(WORKER_COUNT);
+    if (result_store == NULL) {
+        printf("Failed to create result store\n");
+        job_queue_destroy(queue);
+        return 1;
+    }
+
+    WorkerPool *pool = worker_pool_create(queue, WORKER_COUNT, result_store);
     if (pool == NULL) {
         printf("Failed to create worker pool\n");
         job_queue_destroy(queue);
+        result_store_destroy(result_store);
         return 1;
     }
 
